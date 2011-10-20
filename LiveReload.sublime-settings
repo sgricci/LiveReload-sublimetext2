@@ -1,0 +1,9 @@
+{
+
+    "version" : "1.6"
+  , "host" : "localhost"
+  , "port" : 35729
+  , "apply_js_live" : false
+  , "apply_css_live" : false
+  , "apply_images_live" : false
+}
