@@ -1,7 +1,6 @@
 {
 
     "version" : "1.6"
-  , "host" : "localhost"
   , "port" : 35729
   , "delay_ms" : 1500
   , "apply_js_live" : false
