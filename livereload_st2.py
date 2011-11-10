@@ -14,7 +14,7 @@ class LiveReload(threading.Thread):
       global  LivereloadFactory
       threading.Thread.__init__(self)
       settings = sublime.load_settings('LiveReload.sublime-settings')
-      LivereloadFactory = WebSocketServer(settings)
+      LivereloadFactory = WebSocketServer(settings.get('port'),settings.get('version'))
 
     def run(self):
       global  LivereloadFactory
@@ -46,9 +46,10 @@ class WebSocketServer:
     clients connections.
     """
     
-    def __init__(self, settings):
+    def __init__(self, port, version):
       self.clients = []
-      self.settings = settings
+      self.port = port
+      self.version = version
       self.s = None
 
     def stop(self):
@@ -64,7 +65,7 @@ class WebSocketServer:
       try:
         self.s = socket.socket()
         self.s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.s.bind((self.settings.get('host'), self.settings.get('port')))
+        self.s.bind(('', self.port))
         self.s.listen(1)
       except Exception, e:
         pass
@@ -313,7 +314,7 @@ Sec-WebSocket-Protocol: base64\r
         """
         Event called when handshake is compleated
         """
-        self.send("!!ver:"+str(self.server.settings.get('version')))
+        self.send("!!ver:"+str(self.version))
 
     def _clean(self, msg):
         """
