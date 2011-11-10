@@ -49,7 +49,7 @@ class WebSocketServer:
     def __init__(self, port, version):
       self.clients = []
       self.port = port
-      self.version = version
+      self.lversion = version
       self.s = None
 
     def stop(self):
@@ -314,7 +314,7 @@ Sec-WebSocket-Protocol: base64\r
         """
         Event called when handshake is compleated
         """
-        self.send("!!ver:"+str(self.version))
+        self.send("!!ver:"+str(self.lversion))
 
     def _clean(self, msg):
         """
