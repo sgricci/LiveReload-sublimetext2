@@ -1,65 +1,24 @@
-import sublime, sublime_plugin,threading,json
-from websocket import WebSocketServer
+import sublime, sublime_plugin,threading,json,socket      
+from base64 import b64encode, b64decode
+# python 2.6 differences
+try:    from hashlib import md5, sha1
+except: from md5 import md5; from sha import sha as sha1
+from SimpleHTTPServer import SimpleHTTPRequestHandler
+from struct import pack, unpack_from
+import array, struct
+s2a = lambda s: [ord(c) for c in s]
 
 class LiveReload(threading.Thread):
 
     def __init__(self):
       global  LivereloadFactory
       threading.Thread.__init__(self)
-      LivereloadFactory = WSLiveReload()
+      settings = sublime.load_settings('LiveReload.sublime-settings')
+      LivereloadFactory = WebSocketServer(settings)
 
     def run(self):
       global  LivereloadFactory
-      LivereloadFactory.start_server()
-
-class WSLiveReload(WebSocketServer):
-
-    clients = []
-    settings = sublime.load_settings('LiveReload.sublime-settings')
-
-    def __init__  (self):
-      super(WSLiveReload, self).__init__()
-      
-      self.listen_host = self.settings.get('host')
-      self.listen_port = self.settings.get('port')
-      
-    def new_client(self):
-        self.clients = [self]
-        self.log("Browser connected.")
-        self.send("!!ver:"+str(self.settings.get('version')))
-        while True:
-          self.pool()
-    
-    def pool(self): 
-      frames, closed = self.recv_frames()
-      if closed:
-        self.send_close()
-        self.clist.remove(self)
-        self.log("Browser disconnected.")
-        raise self.EClose(closed)
-      else:
-        self.parse(frames[0])
-
-    def send(self, string):
-      for cl in self.clients:
-        cl.send_frames([string])
-    
-    def parse(self, string):
-      self.log("Browser URL: "+string)
-    
-    def log(self,string):
-      sublime.status_message(string)
-
-    def update(self, file):
-      
-      data = json.dumps(["refresh", {
-          "path": file,
-          "apply_js_live": self.settings.get('apply_js_live'),
-          "apply_css_live": self.settings.get('apply_css_live'),
-          "apply_images_live": self.settings.get('apply_images_live')
-      }])
-      sublime.set_timeout(lambda: self.send(data), int(self.settings.get('delay_ms')))    
-        
+      LivereloadFactory.start()
 
 class LiveReloadChange(sublime_plugin.EventListener):
     def __init__  (self):
@@ -67,8 +26,322 @@ class LiveReloadChange(sublime_plugin.EventListener):
 
     def __del__(self):
       global  LivereloadFactory
-      LivereloadFactory.stop_server()
+      LivereloadFactory.stop()
 
     def on_post_save(self, view):
       global  LivereloadFactory
-      LivereloadFactory.update(view.file_name())
+      settings = sublime.load_settings('LiveReload.sublime-settings')
+      data = json.dumps(["refresh", {
+          "path": view.file_name(),
+          "apply_js_live": settings.get('apply_js_live'),
+          "apply_css_live": settings.get('apply_css_live'),
+          "apply_images_live": settings.get('apply_images_live')
+      }])
+      sublime.set_timeout(lambda: LivereloadFactory.send_all(data), int(settings.get('delay_ms')))  
+    
+
+class WebSocketServer:
+    """
+    Handle the Server, bind and accept new connections, open and close
+    clients connections.
+    """
+    
+    def __init__(self, settings):
+      self.clients = []
+      self.settings = settings
+      self.s = None
+
+    def stop(self):
+      [client.close() for client in self.clients]
+      self.s.close()
+
+    def start(self):
+      """
+      Start the server.
+      """
+      self.s = socket.socket()
+      self.s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+      self.s.bind((self.settings.get('host'), self.settings.get('port')))
+      self.s.listen(1)
+
+      try:
+        while 1:
+          conn, addr = self.s.accept()
+          print('Connected by', addr)
+          newClient = WebSocketClient(conn, addr, self)
+          self.clients.append(newClient)
+          newClient.start()
+      except Exception, e:
+        print e
+
+    def send_all(self, data):
+      """
+      Send a message to all the currenly connected clients.
+      """
+      [client.send(data) for client in self.clients]
+
+    def remove(self, client):
+      """
+      Remove a client from the connected list.
+      """
+      l = threading.Lock()
+      l.acquire()
+      self.clients.remove(client)
+      l.release()
+
+class WebSocketClient(threading.Thread):
+    """
+    A single connection (client) of the program
+    """
+
+    # Handshaking, create the WebSocket connection
+    server_handshake_hybi = """HTTP/1.1 101 Switching Protocols\r
+Upgrade: websocket\r
+Connection: Upgrade\r
+Sec-WebSocket-Accept: %s\r
+Sec-WebSocket-Protocol: base64\r
+"""
+    GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+    def __init__(self, sock, addr, server):
+        threading.Thread.__init__(self)
+        self.s = sock
+        self.addr = addr
+        self.server = server
+
+    def run(self):
+
+        
+        #data = self.s.recv(1024)
+        wsh = WSRequestHandler(self.s, self.addr, False)
+        h = self.headers = wsh.headers
+        path = self.path = wsh.path
+
+        prot = 'WebSocket-Protocol'
+        protocols = h.get('Sec-'+prot, h.get(prot, '')).split(',')
+        ver = h.get('Sec-WebSocket-Version')
+        if ver:
+            # HyBi/IETF version of the protocol
+
+            # HyBi-07 report version 7
+            # HyBi-08 - HyBi-12 report version 8
+            # HyBi-13 reports version 13
+            if ver in ['7', '8', '13']:
+                self.version = "hybi-%02d" % int(ver)
+            else:
+                raise Exception('Unsupported protocol version %s' % ver)
+
+            key = h['Sec-WebSocket-Key']
+            # Generate the hash value for the accept header
+            accept = b64encode(sha1(key + self.GUID).digest())
+
+            response = self.server_handshake_hybi % accept
+            response += "Sec-WebSocket-Protocol: base64\r\n"
+            response += "\r\n"
+
+            self.s.send(response.encode())
+            self.new_client()
+            #self.s.send("!!ver:"+str(self.server.settings.get('version')))
+        # Receive and handle data
+        while 1:
+            data = self.s.recv(1024)
+            if not data: break
+
+            dec = WebSocketClient.decode_hybi(data)
+            if dec["opcode"] == 8:
+              self.close()
+            else:
+              self.onreceive(dec)
+
+        # Close the client connection
+        self.close()
+
+    @staticmethod
+    def unmask(buf, f):
+        pstart = f['hlen'] + 4
+        pend = pstart + f['length']
+        # Slower fallback
+        data = array.array('B')
+        mask = s2a(f['mask'])
+        data.fromstring(buf[pstart:pend])
+        for i in range(len(data)):
+            data[i] ^= mask[i % 4]
+        return data.tostring()
+
+    @staticmethod
+    def encode_hybi(buf, opcode, base64=False):
+        """ Encode a HyBi style WebSocket frame.
+        Optional opcode:
+            0x0 - continuation
+            0x1 - text frame (base64 encode buf)
+            0x2 - binary frame (use raw buf)
+            0x8 - connection close
+            0x9 - ping
+            0xA - pong
+        """
+        if base64:
+            buf = b64encode(buf)
+
+        b1 = 0x80 | (opcode & 0x0f) # FIN + opcode
+        payload_len = len(buf)
+        if payload_len <= 125:
+            header = pack('>BB', b1, payload_len)
+        elif payload_len > 125 and payload_len < 65536:
+            header = pack('>BBH', b1, 126, payload_len)
+        elif payload_len >= 65536:
+            header = pack('>BBQ', b1, 127, payload_len)
+
+        #print("Encoded: %s" % repr(header + buf))
+
+        return header + buf, len(header), 0   
+            
+    @staticmethod
+    def decode_hybi(buf, base64=False):
+        """ Decode HyBi style WebSocket packets.
+        Returns:
+            {'fin'          : 0_or_1,
+             'opcode'       : number,
+             'mask'         : 32_bit_number,
+             'hlen'         : header_bytes_number,
+             'length'       : payload_bytes_number,
+             'payload'      : decoded_buffer,
+             'left'         : bytes_left_number,
+             'close_code'   : number,
+             'close_reason' : string}
+        """
+
+        f = {'fin'          : 0,
+             'opcode'       : 0,
+             'mask'         : 0,
+             'hlen'         : 2,
+             'length'       : 0,
+             'payload'      : None,
+             'left'         : 0,
+             'close_code'   : None,
+             'close_reason' : None}
+
+        blen = len(buf)
+        f['left'] = blen
+
+        if blen < f['hlen']:
+            return f # Incomplete frame header
+
+        b1, b2 = unpack_from(">BB", buf)
+        f['opcode'] = b1 & 0x0f
+        f['fin'] = (b1 & 0x80) >> 7
+        has_mask = (b2 & 0x80) >> 7
+
+        f['length'] = b2 & 0x7f
+
+        if f['length'] == 126:
+            f['hlen'] = 4
+            if blen < f['hlen']:
+                return f # Incomplete frame header
+            (f['length'],) = unpack_from('>xxH', buf)
+        elif f['length'] == 127:
+            f['hlen'] = 10
+            if blen < f['hlen']:
+                return f # Incomplete frame header
+            (f['length'],) = unpack_from('>xxQ', buf)
+
+        full_len = f['hlen'] + has_mask * 4 + f['length']
+
+        if blen < full_len: # Incomplete frame
+            return f # Incomplete frame header
+
+        # Number of bytes that are part of the next frame(s)
+        f['left'] = blen - full_len
+
+        # Process 1 frame
+        if has_mask:
+            # unmask payload
+            f['mask'] = buf[f['hlen']:f['hlen']+4]
+            f['payload'] = WebSocketClient.unmask(buf, f)
+        else:
+            print("Unmasked frame: %s" % repr(buf))
+            f['payload'] = buf[(f['hlen'] + has_mask * 4):full_len]
+
+        if base64 and f['opcode'] in [1, 2]:
+            try:
+                f['payload'] = b64decode(f['payload'])
+            except:
+                print("Exception while b64decoding buffer: %s" %
+                        repr(buf))
+                raise
+
+        if f['opcode'] == 0x08:
+            if f['length'] >= 2:
+                f['close_code'] = unpack_from(">H", f['payload'])
+            if f['length'] > 3:
+                f['close_reason'] = f['payload'][2:]
+
+        return f
+    def close(self):
+        """
+        Close this connection
+        """
+        print('Client closed: ', self.addr)
+        self.server.remove(self)
+        self.s.close()
+
+    def send(self, msg):
+        """
+        Send a message to this client
+        """
+        msg = WebSocketClient.encode_hybi(msg, 0x1, False)
+        print msg
+        self.s.send(msg[0])
+
+    def onreceive(self, data):
+        """
+        Event called when a message is received from this client
+        """
+        print data
+
+    def new_client(self):
+        """
+        Event called when handshake is compleated
+        """
+        self.send("!!ver:"+str(self.server.settings.get('version')))
+
+    def _clean(self, msg):
+        """
+        Remove special chars used for the transmission
+        """
+        msg = msg.replace(b'\x00', b'', 1)
+        msg = msg.replace(b'\xff', b'', 1)
+        return msg
+
+# HTTP handler with WebSocket upgrade support
+class WSRequestHandler(SimpleHTTPRequestHandler):
+    def __init__(self, req, addr, only_upgrade=False):
+        self.only_upgrade = only_upgrade # only allow upgrades
+        SimpleHTTPRequestHandler.__init__(self, req, addr, object())
+
+    def do_GET(self):
+        if (self.headers.get('upgrade') and
+                self.headers.get('upgrade').lower() == 'websocket'):
+
+            if (self.headers.get('sec-websocket-key1') or
+                    self.headers.get('websocket-key1')):
+                # For Hixie-76 read out the key hash
+                self.headers.__setitem__('key3', self.rfile.read(8))
+
+            # Just indicate that an WebSocket upgrade is needed
+            self.last_code = 101
+            self.last_message = "101 Switching Protocols"
+        elif self.only_upgrade:
+            # Normal web request responses are disabled
+            self.last_code = 405
+            self.last_message = "405 Method Not Allowed"
+        else:
+            SimpleHTTPRequestHandler.do_GET(self)
+
+    def send_response(self, code, message=None):
+        # Save the status code
+        self.last_code = code
+        SimpleHTTPRequestHandler.send_response(self, code, message)
+
+    def log_message(self, f, *args):
+        # Save instead of printing
+        self.last_message = f % args
