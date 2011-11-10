@@ -18,7 +18,7 @@
                             {
                                 "command": "open_file", "args":
                                 {
-                                    "file": "${packages}/LiveReload-sublimetext2/LiveReload.sublime-settings"
+                                    "file": "${packages}/LiveReload/LiveReload.sublime-settings"
                                 },
                                 "caption": "Settings – Default"
                             },

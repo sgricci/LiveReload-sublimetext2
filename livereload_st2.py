@@ -23,7 +23,7 @@ class LiveReload(threading.Thread):
 class LiveReloadChange(sublime_plugin.EventListener):
     def __init__  (self):
       LiveReload().start()
-
+      
     def __del__(self):
       global  LivereloadFactory
       LivereloadFactory.stop()
@@ -53,16 +53,21 @@ class WebSocketServer:
 
     def stop(self):
       [client.close() for client in self.clients]
-      self.s.close()
+      l = threading.Lock()
+      l.acquire()
+      l.release()
 
     def start(self):
       """
       Start the server.
       """
-      self.s = socket.socket()
-      self.s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-      self.s.bind((self.settings.get('host'), self.settings.get('port')))
-      self.s.listen(1)
+      try:
+        self.s = socket.socket()
+        self.s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.s.bind((self.settings.get('host'), self.settings.get('port')))
+        self.s.listen(1)
+      except Exception, e:
+        pass
 
       try:
         while 1:
@@ -84,10 +89,14 @@ class WebSocketServer:
       """
       Remove a client from the connected list.
       """
-      l = threading.Lock()
-      l.acquire()
-      self.clients.remove(client)
-      l.release()
+      try:
+        l = threading.Lock()
+        l.acquire()
+        self.clients.remove(client)
+        l.release()
+      except Exception, e:
+        pass
+
 
 class WebSocketClient(threading.Thread):
     """
@@ -144,9 +153,11 @@ Sec-WebSocket-Protocol: base64\r
             #self.s.send("!!ver:"+str(self.server.settings.get('version')))
         # Receive and handle data
         while 1:
-            data = self.s.recv(1024)
+            try:
+              data = self.s.recv(1024)
+            except Exception, e:
+              break
             if not data: break
-
             dec = WebSocketClient.decode_hybi(data)
             if dec["opcode"] == 8:
               self.close()
