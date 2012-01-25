@@ -1,4 +1,4 @@
-import sublime, sublime_plugin,threading,json,socket      
+import sublime, sublime_plugin,threading,json,os,threading,subprocess,socket      
 from base64 import b64encode, b64decode
 # python 2.6 differences
 try:    from hashlib import md5, sha1
@@ -31,14 +31,43 @@ class LiveReloadChange(sublime_plugin.EventListener):
     def on_post_save(self, view):
       global  LivereloadFactory
       settings = sublime.load_settings('LiveReload.sublime-settings')
-      data = json.dumps(["refresh", {
-          "path": view.file_name(),
-          "apply_js_live": settings.get('apply_js_live'),
-          "apply_css_live": settings.get('apply_css_live'),
-          "apply_images_live": settings.get('apply_images_live')
-      }])
-      sublime.set_timeout(lambda: LivereloadFactory.send_all(data), int(settings.get('delay_ms')))  
+      filename = view.file_name()
+      if view.file_name().find('.scss') > 0: 
+        filename = filename.replace('sass',settings.get('compass_css_dir')).replace('.scss','.css')
+        dirname = os.path.dirname(os.path.dirname(filename))
+        compiler = CompassThread(dirname,filename,LivereloadFactory)
+        compiler.start()
+      else:
+        data = json.dumps(["refresh", {
+              "path": filename,
+              "apply_js_live": settings.get('apply_js_live'),
+              "apply_css_live": settings.get('apply_css_live'),
+              "apply_images_live": settings.get('apply_images_live')
+          }])
+        sublime.set_timeout(lambda: LivereloadFactory.send_all(data), int(settings.get('delay_ms')))  
     
+
+class CompassThread(threading.Thread):
+
+    def __init__(self, dirname,filename,LivereloadFactory):
+      self.dirname = dirname
+      self.filename = filename
+      self.LivereloadFactory = LivereloadFactory
+      self.stdout = None
+      self.stderr = None
+      threading.Thread.__init__(self)
+      
+    def run(self):
+      global LivereloadFactory
+      p = subprocess.Popen(['compass','compile',self.dirname],shell=True,  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT )
+      if p.stdout.read() :
+        self.LivereloadFactory.send_all(json.dumps(["refresh", {
+              "path": self.filename,
+              "apply_js_live": True,
+              "apply_css_live": True,
+              "apply_images_live": True
+        }]))
+
 
 class WebSocketServer:
     """
