@@ -5,5 +5,5 @@
   , "apply_js_live" : false
   , "apply_css_live" : true
   , "apply_images_live" : true
-  , "compass_css_dir" : "css"
+  , "compass_css_dir" : false //set to false if you have problems with livereload
 }

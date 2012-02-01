@@ -32,7 +32,7 @@ class LiveReloadChange(sublime_plugin.EventListener):
       global  LivereloadFactory
       settings = sublime.load_settings('LiveReload.sublime-settings')
       filename = view.file_name()
-      if view.file_name().find('.scss') > 0: 
+      if view.file_name().find('.scss') > 0 and bool(settings.get('compass_css_dir')): 
         filename = filename.replace('sass',settings.get('compass_css_dir')).replace('.scss','.css')
         dirname = os.path.dirname(os.path.dirname(filename))
         compiler = CompassThread(dirname,filename,LivereloadFactory)
