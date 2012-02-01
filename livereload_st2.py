@@ -5,7 +5,7 @@ try:    from hashlib import md5, sha1
 except: from md5 import md5; from sha import sha as sha1
 from SimpleHTTPServer import SimpleHTTPRequestHandler
 from struct import pack, unpack_from
-import array, struct
+import array, struct,os
 s2a = lambda s: [ord(c) for c in s]
 
 class LiveReload(threading.Thread):
@@ -38,6 +38,11 @@ class LiveReloadChange(sublime_plugin.EventListener):
         compiler = CompassThread(dirname,filename,LivereloadFactory)
         compiler.start()
       else:
+        filename = os.path.normcase(filename)
+        filename = os.path.split(filename)[1]
+        filename = filename.replace('.scss','.css').replace('.styl','.css').replace('.less','.css')
+        filename = filename.replace('.coffee','.js')
+        sublime.status_message("Sent LiveReload command for file: "+filename)
         data = json.dumps(["refresh", {
               "path": filename,
               "apply_js_live": settings.get('apply_js_live'),
@@ -103,6 +108,7 @@ class WebSocketServer:
         while 1:
           conn, addr = self.s.accept()
           print('Connected by', addr)
+          sublime.status_message("New LiveReload client connected")
           newClient = WebSocketClient(conn, addr, self)
           self.clients.append(newClient)
           newClient.start()
@@ -113,6 +119,7 @@ class WebSocketServer:
       """
       Send a message to all the currenly connected clients.
       """
+      
       [client.send(data) for client in self.clients]
 
     def remove(self, client):
