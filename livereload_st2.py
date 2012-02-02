@@ -42,7 +42,7 @@ class LiveReloadChange(sublime_plugin.EventListener):
         filename = os.path.split(filename)[1]
         filename = filename.replace('.scss','.css').replace('.styl','.css').replace('.less','.css')
         filename = filename.replace('.coffee','.js')
-        sublime.status_message("Sent LiveReload command for file: "+filename)
+        
         data = json.dumps(["refresh", {
               "path": filename,
               "apply_js_live": settings.get('apply_js_live'),
@@ -50,6 +50,7 @@ class LiveReloadChange(sublime_plugin.EventListener):
               "apply_images_live": settings.get('apply_images_live')
           }])
         sublime.set_timeout(lambda: LivereloadFactory.send_all(data), int(settings.get('delay_ms')))  
+        sublime.set_timeout(lambda: sublime.status_message("Sent LiveReload command for file: "+filename), int(settings.get('delay_ms')))  
     
 
 class CompassThread(threading.Thread):
@@ -108,10 +109,10 @@ class WebSocketServer:
         while 1:
           conn, addr = self.s.accept()
           print('Connected by', addr)
-          sublime.status_message("New LiveReload client connected")
           newClient = WebSocketClient(conn, addr, self)
           self.clients.append(newClient)
           newClient.start()
+          sublime.set_timeout(lambda: sublime.status_message("New LiveReload client connected"), 100)
       except Exception, e:
         print e
 
